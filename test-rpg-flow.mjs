@@ -3,19 +3,35 @@ import assert from 'node:assert/strict';
 import {walkable} from './dist/rpg/story.mjs';
 const nodes=new Map(),events={},frames=[];let time=0;
 const context=new Proxy({getImageData:(x,y,w,h)=>({data:new Uint8ClampedArray(w*h*4).fill(255)})},{get:(o,k)=>o[k]||(()=>{})});
-function node(){return {hidden:false,disabled:false,textContent:'',children:[],getContext:()=>context,append(b){this.children.push(b)},replaceChildren(){this.children=[]},click(){this.onclick?.()},focus(){document.activeElement=this}}}
-globalThis.document={querySelector:s=>{if(!nodes.has(s))nodes.set(s,node());return nodes.get(s)},createElement:()=>node()};
+function node(){return {play(){return Promise.resolve()},pause(){},handlers:{},addEventListener(k,f){this.handlers[k]=f},querySelectorAll(){return []},hidden:false,disabled:false,textContent:'',children:[],getContext:()=>context,append(b){this.children.push(b)},replaceChildren(){this.children=[]},click(){this.onclick?.()},focus(){document.activeElement=this}}}
+globalThis.document={addEventListener(){},querySelector:s=>{if(!nodes.has(s))nodes.set(s,node());return nodes.get(s)},createElement:()=>node()};
 globalThis.Image=class{constructor(){this.width=1261;this.height=1247}async decode(){if(this.src.includes('cast')){this.width=2172;this.height=724}if(this.src.includes('maps')){this.width=1536;this.height=1024}}};
 const param={value:0,setValueAtTime(){},exponentialRampToValueAtTime(){}};const audioNode=()=>({gain:{...param},frequency:{...param},connect(){return this},start(){},stop(){}});
 globalThis.window={addEventListener:(k,f)=>events[k]=f,AudioContext:class{constructor(){this.currentTime=0}resume(){}createGain(){return audioNode()}createOscillator(){return audioNode()}}};
 globalThis.localStorage={getItem:()=>null,setItem(){}};globalThis.requestAnimationFrame=f=>(frames.push(f),frames.length);globalThis.setInterval=()=>0;globalThis.setTimeout=f=>(f(),0);
 const {inspect}=await import('./dist/rpg/main.mjs');
-function press(key){events.keydown({key,repeat:false,preventDefault(){}})}function release(key){events.keyup({key})}
+const touchMode=process.argv.includes('--touch');
+const control=()=>nodes.get('#touch-controls');const ids=new Map();let nextId=1;
+function button(key){return {dataset:{key:key.toLowerCase()},classList:{add(){},remove(){}},setPointerCapture(){},closest(){return this}}}
+function press(key){if(!touchMode){events.keydown({key,repeat:false,preventDefault(){}});return}if(ids.has(key))return;const target=button(key),pointerId=nextId++;ids.set(key,{target,pointerId});control().handlers.pointerdown({target,pointerId,preventDefault(){}})}
+function release(key){if(!touchMode){events.keyup({key});return}const e=ids.get(key);if(e){control().handlers.pointerup(e);ids.delete(key)}}
+
 async function tick(n=1){for(let i=0;i<n;i++){time+=40;const fs=frames.splice(0);for(const f of fs)f(time);await Promise.resolve();await Promise.resolve()}}
-await tick(10);assert.equal(nodes.get('#new').disabled,false);nodes.get('#new').click();let refused=false,workDone=false,sawRebirth=false;
+await tick(10);
+if(touchMode){
+ // Two fingers may hold the same direction: releasing one must not stop the other.
+ const {bindTouch}=await import('./dist/rpg/touch.mjs');const held=new Set(),handlers={};
+ const root={addEventListener:(k,f)=>handlers[k]=f,querySelectorAll:()=>[]};
+ bindTouch(root,{press:k=>held.add(k),release:k=>held.delete(k),clear:()=>held.clear()});
+ const target=button('arrowright');for(const pointerId of [901,902])handlers.pointerdown({target,pointerId,preventDefault(){}});
+ handlers.pointerup({target,pointerId:901});assert(held.has('arrowright'));
+ handlers.pointercancel({target,pointerId:902});assert.equal(held.size,0);
+}
+assert.equal(nodes.get('#new').disabled,false);nodes.get('#new').click();let refused=false,workDone=false,sawRebirth=false;
 for(let iteration=0;iteration<12000;iteration++){
  await tick();const s=inspect();
  if(s.index===8){sawRebirth=true;if(s.phase==='play')break}
+ if(s.phase==='video'){const video=nodes.get('#memory-video');assert.equal(video.src,'assets/muho-memory.mp4');if(touchMode)nodes.get('#memory-skip').click();else video.onended();continue}
  if(s.phase==='dialog'){press(' ');release(' ');continue}
  if(s.phase==='choice'){const bs=nodes.get('#answers').children;bs[refused?0:1].click();refused=true;continue}
  if(s.phase==='work'){const v=(Math.sin((s.clock-s.workStart)*3)+1)/2;if(v>.4&&v<.7){press(' ');release(' ');workDone=true}continue}
